@@ -39,3 +39,6 @@
 
 # debug information files
 *.dwo
+
+# data folder
+/cosmic_data_2025
