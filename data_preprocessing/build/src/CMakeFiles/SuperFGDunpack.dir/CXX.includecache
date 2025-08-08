@@ -1,0 +1,26 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/media/disk_b/standard_software/sfgd_framework/analysis/src/classes/Event.hh
+TObject.h
+-
+TClonesArray.h
+-
+Hit.hh
+/media/disk_b/standard_software/sfgd_framework/analysis/src/classes/Hit.hh
+
+/media/disk_b/standard_software/sfgd_framework/analysis/src/classes/Hit.hh
+TObject.h
+-
+TClonesArray.h
+-
+iostream
+-
+
+/media/disk_b/standard_software/sfgd_framework/data_preprocessing/src/LinkDef.h
+

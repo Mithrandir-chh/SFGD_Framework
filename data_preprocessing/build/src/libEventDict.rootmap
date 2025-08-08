@@ -1,0 +1,4 @@
+[ libEventDict.so ]
+# List of selected classes
+class Event
+class Hit

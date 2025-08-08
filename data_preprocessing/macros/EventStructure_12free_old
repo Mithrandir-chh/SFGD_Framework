@@ -1,0 +1,501 @@
+#include "../src/global_header.hh"
+#include <cstring>
+
+//Function to get the directory of the input file in order to create output file in same directory
+string GetLocation(string str)
+{
+  int i = str.rfind("_calib");
+  string way = str.substr(0,i);
+  return way;
+}
+
+//Function to check that the input file is indeed a _all_calib.root file
+bool CheckFile(string str)
+{
+  if (str.find("_calib.root") != string::npos) return 0;
+  return 1;
+}
+
+struct vectorsTree
+{
+  vector<double> *FEBSN;
+  vector<double> *SpillTag;
+  vector<double> *GTrigTag;
+  vector<double> *GTrigTime;
+  vector<double> *hitsChannel;
+  vector<double> *hitAmpl;
+  vector<double> *hitAmplRec;
+  vector<double> *hitLGAmpl;
+  vector<double> *hitLGAmplRec;
+  vector<double> *hitHG_pe;
+  vector<double> *hitLG_pe;
+  vector<double> *hitToT_pe;
+  vector<double> *hitCharge_pe;
+  vector<double> *hitLeadTime;
+  vector<double> *hitTrailTime;
+  vector<double> *hitTimeDif;
+  vector<double> *SpillTime;
+  vector<double> *SpillTimeGTrig;
+  vector<double> *hitTimefromSpill;
+  vector<double> *SpillTrailTime;
+  vector<double> *AsicTemperature;
+  vector<double> *FPGATemperature;
+  vector<double> *GlobalHV;
+  vector<double> *BoardTemperature;
+  vector<double> *BoardHumidity;
+};
+
+ClassImp(Hit);
+ClassImp(Event);
+
+int main(int argc, char **argv) {
+
+  // process arguments - simplified without data type requirement
+  if (argc != 2) { 
+    printf("Enter source _calib.root file: ./EventStructure inputfile\n"); 
+    return EXIT_FAILURE; 
+  }
+  string sFileName(argv[1]);
+  
+  if (CheckFile(sFileName) == 1) { 
+    printf("Source must be a _calib.root file \n"); 
+    return EXIT_FAILURE; 
+  }
+
+  int NumberOfEB = 30;
+  int len = 18;
+  vector<int> FEBs = {0,1,2,3,4,8,9,10,11,16,17,18,19,20,24,25,26,27};
+  
+  TFile *FileInput=new TFile(sFileName.c_str(),"read");
+  cout<<"Reading "<<sFileName<<endl;
+
+  string rootFileOutput=GetLocation(sFileName.c_str());
+  rootFileOutput+="_events.root";
+
+  TFile wfile(rootFileOutput.c_str(), "recreate");
+  cout<<rootFileOutput<<endl;
+
+  vectorsTree FEB[NumberOfEB];
+
+  for (Int_t i=0;i<NumberOfEB;i++){
+    FEB[i].FEBSN=0;
+    FEB[i].SpillTag=0;
+    FEB[i].hitsChannel=0;
+    FEB[i].hitAmpl=0;
+    FEB[i].hitLeadTime=0;
+    FEB[i].GTrigTag=0;
+    FEB[i].GTrigTime=0;
+    FEB[i].hitLGAmpl=0;
+    FEB[i].hitTrailTime=0;
+    FEB[i].hitTimeDif=0;
+    FEB[i].SpillTime=0;
+    FEB[i].SpillTimeGTrig=0;
+    FEB[i].hitTimefromSpill=0;
+    FEB[i].SpillTrailTime=0;
+    FEB[i].AsicTemperature=0;
+    FEB[i].FPGATemperature=0;
+    FEB[i].GlobalHV=0;
+    FEB[i].BoardTemperature=0;
+    FEB[i].BoardHumidity=0;
+    FEB[i].hitHG_pe=0;
+    FEB[i].hitLG_pe=0;
+    FEB[i].hitToT_pe=0;
+    FEB[i].hitCharge_pe=0;
+    FEB[i].hitAmplRec=0;
+    FEB[i].hitLGAmplRec=0;
+  }
+
+  TTree *FEBtree[NumberOfEB];
+
+  int TotalSpills=0;
+  int NumofSpills[len];
+  int MinSpills=1e9;
+  int febx=0;
+
+  ostringstream sFEBnum;
+  string sFEB;
+
+  vector<int> FEBnumbers;
+  FEBnumbers.clear();
+
+  for (Int_t ih=0; ih<NumberOfEB; ih++) {
+    sFEBnum.str("");
+    sFEBnum << ih;
+    sFEB = "FEB_"+sFEBnum.str();
+    FEBtree[ih] = (TTree*)FileInput->Get(sFEB.c_str());
+    if ((TTree*)FileInput->Get(sFEB.c_str())){
+      std::cout<<sFEB<<'\t';
+
+      FEBtree[ih]->SetBranchAddress((sFEB+"_SN").c_str(),&FEB[ih].FEBSN);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_SpillTag").c_str(),&FEB[ih].SpillTag);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_GTrigTag").c_str(),&FEB[ih].GTrigTag);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_GTrigTime").c_str(),&FEB[ih].GTrigTime);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitsChannel").c_str(),&FEB[ih].hitsChannel);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitAmpl").c_str(),&FEB[ih].hitAmpl);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitLGAmpl").c_str(),&FEB[ih].hitLGAmpl);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitLeadTime").c_str(),&FEB[ih].hitLeadTime);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitTrailTime").c_str(),&FEB[ih].hitTrailTime);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitTimeDif").c_str(),&FEB[ih].hitTimeDif);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_SpillTime").c_str(),&FEB[ih].SpillTime);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_SpillTimeGTrig").c_str(),&FEB[ih].SpillTimeGTrig);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitTimefromSpill").c_str(),&FEB[ih].hitTimefromSpill);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_SpillTrailTime").c_str(),&FEB[ih].SpillTrailTime);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_AsicTemperature").c_str(),&FEB[ih].AsicTemperature);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_FPGATemperature").c_str(),&FEB[ih].FPGATemperature);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_GlobalHV").c_str(),&FEB[ih].GlobalHV);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_BoardTemperature").c_str(),&FEB[ih].BoardTemperature);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_BoardHumidity").c_str(),&FEB[ih].BoardHumidity);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitAmplRecon").c_str(), &FEB[ih].hitAmplRec);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitLGAmplRecon").c_str(), &FEB[ih].hitLGAmplRec);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitHG_pe").c_str(), &FEB[ih].hitHG_pe);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitLG_pe").c_str(), &FEB[ih].hitLG_pe);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitToT_pe").c_str(), &FEB[ih].hitToT_pe);
+      FEBtree[ih]->SetBranchAddress((sFEB+"_hitCharge_pe").c_str(), &FEB[ih].hitCharge_pe);
+
+      TotalSpills = FEBtree[ih]->GetEntries();
+      FEBtree[ih]->GetEntry(0);
+
+      cout<< "Number of Spills "<< TotalSpills - 1 <<endl;
+      NumofSpills[febx]=TotalSpills;
+      if (MinSpills > TotalSpills) MinSpills = TotalSpills;
+      febx++;
+    }
+  }
+
+  TotalSpills = MinSpills;
+  cout<<"Processing "<<TotalSpills-1<<" spills"<<endl;
+
+  cout<<"FEB number "<<len<<endl;
+
+  int MapCon[62][2][96];
+  for (int iFEB = 0; iFEB<len; iFEB++) {
+    sFEBnum.str("");
+    sFEBnum << FEBs[iFEB];
+    sFEB = "../mapping/" + sFEBnum.str() + ".txt";
+    ifstream fmap(sFEB.c_str());
+    int temp=0;
+    while (temp<96) {
+      cout<< FEBs[iFEB] << temp<<endl;
+      fmap >> temp >> MapCon[FEBs[iFEB]][0][temp] >>MapCon[FEBs[iFEB]][1][temp];
+      temp++;
+    }
+    fmap.close();
+  }
+
+  std::cout<<"mapping finished .. "<<std::endl;
+  
+  //AllEvents tree
+  TTree AllEvents("AllEvents", "The ROOT tree of events");
+  Event* event = new Event();
+  AllEvents.Branch("Event", "Event", event);
+
+  Int_t eventNum=0;
+  bool SpillMissed = false;
+  Int_t XZocc[48], ZYocc[48], EDepXZ[48],EDepZY[48],EDep[48];
+  int hitCount = 0;
+
+  cout<<"check point 1"<<endl;
+  
+  // Create second tree for time-grouped events
+  TTree TimeGroupedEvents("TimeGroupedEvents", "Time-grouped events within spills");
+  Event* timeGroupedEvent = new Event();
+  TimeGroupedEvents.Branch("Event", "Event", timeGroupedEvent);
+  Int_t timeGroupedEventNum = 0;
+  
+  //loop over spills
+  //for (Int_t subSpill = 0; subSpill<TotalSpills-1; subSpill++) {
+  for (Int_t subSpill = 0; subSpill<15; subSpill++) {
+    
+    cout << "_Getting Spill Number " << subSpill  << " of "<<TotalSpills-1<<"...";
+
+    // Create event for this spill
+    // Clear occupancy and energy arrays
+    for (int ij = 0; ij < 48; ij++ ){
+      XZocc[ij] = 0;
+      ZYocc[ij] = 0;
+      EDepXZ[ij] = 0;
+      EDepZY[ij] = 0;
+      EDep[ij] = 0;
+    }
+    
+    TH2D *hitsXY = new TH2D("hitsXY","", 24,0,24, 8,0,8);
+
+    //loop over FEBs
+    for (int ik = 0; ik < len; ik++){
+      cout<<"check point 2."<<ik<<" "<<FEBs[ik]<<endl;
+
+      FEBtree[FEBs[ik]]->GetEntry(subSpill);
+      
+      if (FEB[FEBs[ik]].SpillTag->size() == 0){
+        continue;
+      }
+      
+      // Process all hits for this FEB in this spill
+      for (int ihit = 0; ihit < FEB[FEBs[ik]].hitAmpl->size(); ihit++){
+        
+        // Filter out hits with hitHG_pe < 3
+        if (FEB[FEBs[ik]].hitHG_pe->at(ihit) < 20) {
+          cout<<"Filtered out hit with hitHG_pe = "<<FEB[FEBs[ik]].hitHG_pe->at(ihit)<<endl;
+          continue;
+        }
+        
+        Hit* hit = event->AddHit();
+        
+        // Set hit properties
+        if (FEB[FEBs[ik]].hitCharge_pe->at(ihit)<10000) 
+          hit->SetPE(FEB[FEBs[ik]].hitCharge_pe->at(ihit));
+        hit->SetHG_pe(FEB[FEBs[ik]].hitHG_pe->at(ihit));
+        hit->SetLG_pe(FEB[FEBs[ik]].hitLG_pe->at(ihit));
+        hit->SetToT_pe(FEB[FEBs[ik]].hitToT_pe->at(ihit));
+        hit->SetHG_ADC(FEB[FEBs[ik]].hitAmpl->at(ihit));
+        hit->SetLG_ADC(FEB[FEBs[ik]].hitLGAmpl->at(ihit));
+        hit->SetRE(FEB[FEBs[ik]].hitLeadTime->at(ihit));
+        hit->SetFE(FEB[FEBs[ik]].hitTrailTime->at(ihit));
+        hit->SetToT(FEB[FEBs[ik]].hitTimeDif->at(ihit));
+        hit->SetSpillTag(FEB[FEBs[ik]].SpillTag->at(ihit));
+        hit->SetSpillTime(FEB[FEBs[ik]].SpillTime->at(ihit));
+        hit->SetSpillTrailTime(FEB[FEBs[ik]].SpillTrailTime->at(ihit));
+        hit->SetTfromSpill(FEB[FEBs[ik]].hitTimefromSpill->at(ihit));
+        hit->SetFEB(FEBs[ik]);
+        hit->SetCh((int)FEB[FEBs[ik]].hitsChannel->at(ihit));
+        hit->SetGTrigTag(FEB[FEBs[ik]].GTrigTag->at(ihit));
+        hit->SetGTrigTime(FEB[FEBs[ik]].GTrigTime->at(ihit));
+        
+        hitCount++;
+        cout<<"hit # "<<hitCount<<endl;
+
+        // Determine view and position based on FEB number
+        if ( FEBs[ik] == 0 || FEBs[ik] == 16 || (FEBs[ik] == 56 && FEB[FEBs[ik]].hitsChannel->at(ihit) < 64)){
+          hit->SetView(0);    //XY view
+          hit->SetX(MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          hit->SetY(MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          hit->SetZ(-1);
+          cout<<"a XY hit : "<<MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<FEB[FEBs[ik]].hitCharge_pe->at(ihit)<<endl;
+          if (hit->GetPE() > 20)
+            hitsXY->Fill(hit->GetX(),hit->GetY());
+
+        } else if ( FEBs[ik] == 1 || FEBs[ik] == 2 || FEBs[ik] == 17 || FEBs[ik] == 24 || 
+                    FEBs[ik] == 56 || FEBs[ik] == 57 || 
+                    (FEBs[ik] == 60 && FEB[FEBs[ik]].hitsChannel->at(ihit) < 64) || 
+                    (FEBs[ik] == 61 && FEB[FEBs[ik]].hitsChannel->at(ihit) > 31)){
+          hit->SetView(2);   //ZY view
+          hit->SetX(-1);
+          cout<<"a ZY hit : "<<MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<FEB[FEBs[ik]].hitCharge_pe->at(ihit)<<endl;
+          hit->SetZ(MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          hit->SetY(MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          if (FEB[FEBs[ik]].hitCharge_pe->at(ihit)>0 && FEB[FEBs[ik]].hitCharge_pe->at(ihit)<10000) {
+            ZYocc[MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]]+=1;
+            EDepZY[MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]]+=FEB[FEBs[ik]].hitCharge_pe->at(ihit);
+          }
+        } else {
+          hit->SetView(1);   //XZ view
+          hit->SetX(MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          hit->SetY(-1);
+          hit->SetZ(MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]);
+          cout<<"a XZ hit : "<<MapCon[FEBs[ik]][0][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]<<" "
+              <<FEB[FEBs[ik]].hitCharge_pe->at(ihit)<<endl;
+          if (FEB[FEBs[ik]].hitCharge_pe->at(ihit)>0 && FEB[FEBs[ik]].hitCharge_pe->at(ihit)<10000) {
+            XZocc[MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]]+=1;
+            EDepXZ[MapCon[FEBs[ik]][1][(int)FEB[FEBs[ik]].hitsChannel->at(ihit)]]+=FEB[FEBs[ik]].hitCharge_pe->at(ihit);
+          }
+        }
+      }
+    }
+    
+    // Calculate event properties
+    Int_t range = 0;
+    Int_t empty = 0;
+    for (int ij = 0; ij < 48; ij++ ){
+      event->SetOccupancyXZ(ij,XZocc[ij]);
+      event->SetOccupancyZY(ij,ZYocc[ij]);
+      event->SetdEdzXZ(ij,EDepXZ[ij]);
+      event->SetdEdzZY(ij,EDepZY[ij]);
+      event->SetdEdz(ij,EDepXZ[ij]+EDepZY[ij]);
+      if(EDepXZ[ij]+EDepZY[ij]>0) range = ij+1;
+      if (EDepXZ[ij] <= 20 || EDepZY[ij] <= 20) empty++;
+    }
+
+    Double_t xSD = hitsXY->GetStdDev(1);
+    Double_t ySD = hitsXY->GetStdDev(2);
+    
+    // Set event properties (removed FEB12-specific ones)
+    event->SetRange(range);
+    event->SetMaxCharge(event->FindMaxCharge());
+    event->SetEventID(eventNum);
+    event->SetEmptyZ(empty);
+    event->SetXStdDev(xSD);
+    event->SetYStdDev(ySD);
+
+    AllEvents.Fill();
+
+    delete hitsXY;
+    event->Clear();
+    eventNum++;
+    
+    // Time-based grouping for this spill
+    cout<<"Starting time-based grouping for spill "<<subSpill<<endl;
+    
+    // Collect all hits from this spill with their time and FEB info
+    struct HitInfo {
+      double time;
+      int feb;
+      int hitIndex;
+      bool used;
+    };
+    vector<HitInfo> allHitsInSpill;
+    
+    // Gather all hits from all FEBs for this spill
+    for (int ik = 0; ik < len; ik++){
+      FEBtree[FEBs[ik]]->GetEntry(subSpill);
+      for (int ihit = 0; ihit < FEB[FEBs[ik]].hitAmpl->size(); ihit++){
+        // Apply same filter
+        if (FEB[FEBs[ik]].hitHG_pe->at(ihit) < 20) continue;
+        
+        HitInfo hi;
+        hi.time = FEB[FEBs[ik]].hitTimefromSpill->at(ihit);
+        hi.feb = FEBs[ik];
+        hi.hitIndex = ihit;
+        hi.used = false;
+        allHitsInSpill.push_back(hi);
+      }
+    }
+    
+    // Sort hits by time
+    sort(allHitsInSpill.begin(), allHitsInSpill.end(), 
+         [](const HitInfo& a, const HitInfo& b) { return a.time < b.time; });
+    
+    cout<<"Total hits in spill after filtering: "<<allHitsInSpill.size()<<endl;
+    
+    // Group hits by time
+    for (int i = 0; i < allHitsInSpill.size(); i++) {
+      if (allHitsInSpill[i].used) continue; // Skip already grouped hits
+      
+      // Start new time group
+      double seedTime = allHitsInSpill[i].time;
+      cout<<"New time group starting at time "<<seedTime<<endl;
+      
+      // Clear arrays for new event
+      for (int ij = 0; ij < 48; ij++ ){
+        XZocc[ij] = 0;
+        ZYocc[ij] = 0;
+        EDepXZ[ij] = 0;
+        EDepZY[ij] = 0;
+        EDep[ij] = 0;
+      }
+      TH2D *hitsXY_time = new TH2D("hitsXY_time","", 24,0,24, 8,0,8);
+      
+      // Add all hits within 4 ticks of seed
+      for (int j = i; j < allHitsInSpill.size(); j++) {
+        if (allHitsInSpill[j].time <= seedTime + 4) {
+          allHitsInSpill[j].used = true;
+          
+          // Recreate hit for time-grouped event
+          int febId = allHitsInSpill[j].feb;
+          int hitIdx = allHitsInSpill[j].hitIndex;
+          
+          Hit* hit = timeGroupedEvent->AddHit();
+          
+          // Set all hit properties (same as before)
+          if (FEB[febId].hitCharge_pe->at(hitIdx)<10000) 
+            hit->SetPE(FEB[febId].hitCharge_pe->at(hitIdx));
+          hit->SetHG_pe(FEB[febId].hitHG_pe->at(hitIdx));
+          hit->SetLG_pe(FEB[febId].hitLG_pe->at(hitIdx));
+          hit->SetToT_pe(FEB[febId].hitToT_pe->at(hitIdx));
+          hit->SetHG_ADC(FEB[febId].hitAmpl->at(hitIdx));
+          hit->SetLG_ADC(FEB[febId].hitLGAmpl->at(hitIdx));
+          hit->SetRE(FEB[febId].hitLeadTime->at(hitIdx));
+          hit->SetFE(FEB[febId].hitTrailTime->at(hitIdx));
+          hit->SetToT(FEB[febId].hitTimeDif->at(hitIdx));
+          hit->SetSpillTag(FEB[febId].SpillTag->at(hitIdx));
+          hit->SetSpillTime(FEB[febId].SpillTime->at(hitIdx));
+          hit->SetSpillTrailTime(FEB[febId].SpillTrailTime->at(hitIdx));
+          hit->SetTfromSpill(FEB[febId].hitTimefromSpill->at(hitIdx));
+          hit->SetFEB(febId);
+          hit->SetCh((int)FEB[febId].hitsChannel->at(hitIdx));
+          hit->SetGTrigTag(FEB[febId].GTrigTag->at(hitIdx));
+          hit->SetGTrigTime(FEB[febId].GTrigTime->at(hitIdx));
+          
+          // Determine view and update occupancy/energy (same logic as before)
+          if ( febId == 0 || febId == 16 || (febId == 56 && FEB[febId].hitsChannel->at(hitIdx) < 64)){
+            hit->SetView(0);    //XY view
+            hit->SetX(MapCon[febId][0][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            hit->SetY(MapCon[febId][1][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            hit->SetZ(-1);
+            if (hit->GetPE() > 20)
+              hitsXY_time->Fill(hit->GetX(),hit->GetY());
+          } else if ( febId == 1 || febId == 2 || febId == 17 || febId == 24 || 
+                      febId == 56 || febId == 57 || 
+                      (febId == 60 && FEB[febId].hitsChannel->at(hitIdx) < 64) || 
+                      (febId == 61 && FEB[febId].hitsChannel->at(hitIdx) > 31)){
+            hit->SetView(2);   //ZY view
+            hit->SetX(-1);
+            hit->SetZ(MapCon[febId][0][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            hit->SetY(MapCon[febId][1][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            if (FEB[febId].hitCharge_pe->at(hitIdx)>0 && FEB[febId].hitCharge_pe->at(hitIdx)<10000) {
+              ZYocc[MapCon[febId][0][(int)FEB[febId].hitsChannel->at(hitIdx)]]+=1;
+              EDepZY[MapCon[febId][0][(int)FEB[febId].hitsChannel->at(hitIdx)]]+=FEB[febId].hitCharge_pe->at(hitIdx);
+            }
+          } else {
+            hit->SetView(1);   //XZ view
+            hit->SetX(MapCon[febId][0][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            hit->SetY(-1);
+            hit->SetZ(MapCon[febId][1][(int)FEB[febId].hitsChannel->at(hitIdx)]);
+            if (FEB[febId].hitCharge_pe->at(hitIdx)>0 && FEB[febId].hitCharge_pe->at(hitIdx)<10000) {
+              XZocc[MapCon[febId][1][(int)FEB[febId].hitsChannel->at(hitIdx)]]+=1;
+              EDepXZ[MapCon[febId][1][(int)FEB[febId].hitsChannel->at(hitIdx)]]+=FEB[febId].hitCharge_pe->at(hitIdx);
+            }
+          }
+        }
+      }
+      
+      // Calculate event properties for time-grouped event
+      Int_t range = 0;
+      Int_t empty = 0;
+      for (int ij = 0; ij < 48; ij++ ){
+        timeGroupedEvent->SetOccupancyXZ(ij,XZocc[ij]);
+        timeGroupedEvent->SetOccupancyZY(ij,ZYocc[ij]);
+        timeGroupedEvent->SetdEdzXZ(ij,EDepXZ[ij]);
+        timeGroupedEvent->SetdEdzZY(ij,EDepZY[ij]);
+        timeGroupedEvent->SetdEdz(ij,EDepXZ[ij]+EDepZY[ij]);
+        if(EDepXZ[ij]+EDepZY[ij]>0) range = ij+1;
+        if (EDepXZ[ij] <= 20 || EDepZY[ij] <= 20) empty++;
+      }
+      
+      Double_t xSD_time = hitsXY_time->GetStdDev(1);
+      Double_t ySD_time = hitsXY_time->GetStdDev(2);
+      
+      timeGroupedEvent->SetRange(range);
+      timeGroupedEvent->SetMaxCharge(timeGroupedEvent->FindMaxCharge());
+      timeGroupedEvent->SetEventID(timeGroupedEventNum);
+      timeGroupedEvent->SetEmptyZ(empty);
+      timeGroupedEvent->SetXStdDev(xSD_time);
+      timeGroupedEvent->SetYStdDev(ySD_time);
+      
+      // Only save if event has hits
+      if (timeGroupedEvent->GetNHits() > 0) {
+        TimeGroupedEvents.Fill();
+        timeGroupedEventNum++;
+        cout<<"Time-grouped event "<<timeGroupedEventNum-1<<" has "<<timeGroupedEvent->GetNHits()<<" hits"<<endl;
+      }
+      
+      delete hitsXY_time;
+      timeGroupedEvent->Clear();
+    }
+  }
+
+  cout<<"eventNum : "<<eventNum<<endl;
+  cout<<"timeGroupedEventNum : "<<timeGroupedEventNum<<endl;
+
+  wfile.cd();
+  AllEvents.Write("",TObject::kOverwrite);
+  TimeGroupedEvents.Write("",TObject::kOverwrite);
+  wfile.Close();
+  FileInput->Close();
+
+  return 0;
+}

@@ -1,0 +1,14 @@
+# HTCondor queues
+# espresso = 20 minutes, microcentury = 1 hour, longlunch  = 2 hours, workday  = 8 hours, tomorrow  = 1 day, testmatch = 3 days, nextweek = 1 week
+executable              = $(filename)
+arguments               = $(ClusterId)$(ProcId)
+requirements            = (OpSysAndVer =?= "CentOS7")
++JobFlavour             = "workday"
+output                  = /afs/cern.ch/user/c/cjesus/SuperFGD/sfgd_unpacking_scripts/JOBS_OUTPUT/output/$(ClusterId).$(ProcId).out
+error                   = /afs/cern.ch/user/c/cjesus/SuperFGD/sfgd_unpacking_scripts/JOBS_OUTPUT/err/$(ClusterId).$(ProcId).err
+log                     = /afs/cern.ch/user/c/cjesus/SuperFGD/sfgd_unpacking_scripts/JOBS_OUTPUT/log/$(ClusterId).log
+universe                = vanilla
+request_cpus            = 1
+request_disk            = 10 GB
+priority                = 20
+queue filename matching files temp/*.sh
