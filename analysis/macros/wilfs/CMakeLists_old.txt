@@ -1,0 +1,63 @@
+message(STATUS "building wilfs workspace... ")
+if    (ROOT_FOUND)
+	#ADD_EXECUTABLE(MuonSelection                   muon_selection.cpp)
+	#TARGET_LINK_LIBRARIES(MuonSelection            SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(TimeResMuon                     Time_res_muon.cpp)
+  TARGET_LINK_LIBRARIES(TimeResMuon              SuperFGD_Analysis ${ROOT_LIBRARIES})
+  ADD_TEST(TimeResMuon_test                      ${CMAKE_CURRENT_SOURCE_DIR}/../../bin/wilfs/TimeResMuon)
+
+  ADD_EXECUTABLE(TimeOffset                      Time_offset.cpp)
+  TARGET_LINK_LIBRARIES(TimeOffset               SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(hitThresholds                   hitThreshold.cpp)
+  TARGET_LINK_LIBRARIES(hitThresholds            SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(cubeLightYield                  cubeLightYield.cpp)
+  TARGET_LINK_LIBRARIES(cubeLightYield           SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(eventDisplay                    eventDisplay.cpp)
+  TARGET_LINK_LIBRARIES(eventDisplay             SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(calibPlots                      calibPlots.cpp)
+  TARGET_LINK_LIBRARIES(calibPlots               SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(gainPlots                       gainPlots.cpp)
+  TARGET_LINK_LIBRARIES(gainPlots                SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(afterpulseCo                    afterpulseCo.cpp)
+  TARGET_LINK_LIBRARIES(afterpulseCo             SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nEventDisplay                   nEventDisplay.cpp)
+  TARGET_LINK_LIBRARIES(nEventDisplay            SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nEventDisplayTime               nEventDisplayTime.cpp)
+  TARGET_LINK_LIBRARIES(nEventDisplayTime        SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nEventsMap                      nEventsMap.cpp)
+  TARGET_LINK_LIBRARIES(nEventsMap               SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nEventsMapUSJ                   nEventsMapUSJ.cpp)
+  TARGET_LINK_LIBRARIES(nEventsMapUSJ            SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nDataQuality                    nDataQuality.cpp)
+  TARGET_LINK_LIBRARIES(nDataQuality             SuperFGD_Analysis ${ROOT_LIBRARIES})  
+
+  ADD_EXECUTABLE(nEnergySpectrum                 nEnergySpectrum.cpp)
+  TARGET_LINK_LIBRARIES(nEnergySpectrum          SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(nEnergySpectrum2                 nEnergySpectrum2.cpp)
+  TARGET_LINK_LIBRARIES(nEnergySpectrum2          SuperFGD_Analysis ${ROOT_LIBRARIES})  
+
+  ADD_EXECUTABLE(nExtinction                     nExtinction.cpp)
+  TARGET_LINK_LIBRARIES(nExtinction              SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(timeRes                     timeRes.cpp)
+  TARGET_LINK_LIBRARIES(timeRes              SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  ADD_EXECUTABLE(timeRes2                     timeRes2.cpp)
+  TARGET_LINK_LIBRARIES(timeRes2              SuperFGD_Analysis ${ROOT_LIBRARIES})
+
+  # ADD_EXECUTABLE(TimeResMuonAll                  Time_res_muon_all.cpp)
+  # TARGET_LINK_LIBRARIES(TimeResMuonAll           SuperFGD_Analysis ${ROOT_LIBRARIES})
+endif (ROOT_FOUND)

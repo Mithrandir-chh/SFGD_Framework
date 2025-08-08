@@ -1,0 +1,24 @@
+{ decls }
+namespace std {  }
+
+[ libEventDict.so ]
+# List of selected classes
+class Event
+class Hit
+class ND280SFGDEvent
+class ND280SFGDHit
+class ND280SFGDTrack
+class ND280SFGDVoxel
+class ND280SFGDVoxelSet
+class vector<ND280SFGDEvent>
+class vector<ND280SFGDHit>
+class vector<ND280SFGDTrack>
+class vector<ND280SFGDVoxel>
+class vector<ND280SFGDVoxelSet>
+header classes/Event.hh
+header classes/Hit.hh
+header classes/ND280SFGDEvent.hh
+header classes/ND280SFGDHit.hh
+header classes/ND280SFGDTrack.hh
+header classes/ND280SFGDVoxel.hh
+header classes/ND280SFGDVoxelSet.hh

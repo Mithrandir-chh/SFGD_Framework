@@ -1,0 +1,3 @@
+/media/disk_b/standard_software/sfgd_framework/analysis/lib/libEventDict_rdict.pcm
+/media/disk_b/standard_software/sfgd_framework/analysis/lib/libEventDict.rootmap
+/media/disk_b/standard_software/sfgd_framework/analysis/lib/EventDict.cxx

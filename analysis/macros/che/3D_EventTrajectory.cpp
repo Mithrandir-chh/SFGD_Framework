@@ -1,0 +1,1249 @@
+// Saves reconstructed hits to TH3 histograms for offline viewing with trajectory fitting
+#define THIS_NAME EventDisplays_3D
+#define OVERRIDE_OPTIONS
+
+#include <iostream>
+#include <vector>
+#include <map>
+#include <cmath>
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include "TFile.h"
+#include "TTree.h"
+#include "TH3F.h"
+#include "TClonesArray.h"
+#include "TSystem.h"
+#include "TROOT.h"
+#include "TPolyLine3D.h"
+#include "TVector3.h"
+#include "TVectorD.h"
+#include "TMatrixD.h"
+#include "TF1.h"
+#include "TMath.h"
+#include "TStyle.h"
+#include "TNamed.h"
+
+// Include the framework headers
+#include "../../src/tools/global_header.hh"
+
+using namespace std;
+
+// Structure to hold 3D hit information
+struct Hit3D {
+    double x, y, z;
+    double charge;
+    double timeXY, timeXZ, timeZY;
+    // Individual view charges (new addition)
+    double chargeXY, chargeXZ, chargeZY;
+    // Store original charges before redistribution for overlapped hits
+    double originalChargeXY, originalChargeXZ, originalChargeZY;
+    int nViews;
+    std::string matchType;
+    double confidence;  // confidence level 0.0 to 1.0
+    bool redistributed;  // Flag to track if this hit went through redistribution
+};
+
+// Structure to organize hits by view
+struct ViewHits {
+    std::vector<int> indices;
+    std::vector<std::pair<int, int>> positions;
+    std::vector<double> charges;
+    std::vector<double> times;
+};
+
+// Structure for trajectory parameters
+struct TrajectoryParams {
+    double x0, y0, z0;  // Entry point
+    double vx, vy, vz;  // Direction vector
+    double theta, phi;  // Angles
+    bool valid;
+};
+
+// Function to create directory if it doesn't exist
+TString createOutputDirectory(const TString& inputFile) {
+    // Extract directory path from input file
+    TString inputDir = gSystem->DirName(inputFile);
+    
+    // Create the subfolder path
+    TString outputDir = inputDir + "/3D_Display_root";
+    
+    // Check if directory exists, create if not
+    if (gSystem->AccessPathName(outputDir)) {
+        std::cout << "Creating output directory: " << outputDir << std::endl;
+        if (gSystem->mkdir(outputDir, kTRUE) != 0) {
+            std::cerr << "Warning: Could not create directory " << outputDir << std::endl;
+            std::cerr << "Using current directory instead." << std::endl;
+            return "./3D_Display_root";
+        }
+    } else {
+        std::cout << "Using existing output directory: " << outputDir << std::endl;
+    }
+    
+    return outputDir;
+}
+
+// Helper function to get charge from view data
+double getViewCharge(const std::string& view, double x, double y, double z, 
+                    const ViewHits& viewXY, const ViewHits& viewXZ, const ViewHits& viewZY) {
+    if (view == "XY") {
+        int targetX = (int)x;
+        int targetY = (int)y;
+        for (size_t k = 0; k < viewXY.positions.size(); k++) {
+            if (viewXY.positions[k].first == targetX && viewXY.positions[k].second == targetY) {
+                return viewXY.charges[k];
+            }
+        }
+    } else if (view == "XZ") {
+        int targetX = (int)x;
+        int targetZ = (int)z;
+        for (size_t k = 0; k < viewXZ.positions.size(); k++) {
+            if (viewXZ.positions[k].first == targetX && viewXZ.positions[k].second == targetZ) {
+                return viewXZ.charges[k];
+            }
+        }
+    } else if (view == "ZY") {
+        int targetZ = (int)z;
+        int targetY = (int)y;
+        for (size_t k = 0; k < viewZY.positions.size(); k++) {
+            if (viewZY.positions[k].first == targetZ && viewZY.positions[k].second == targetY) {
+                return viewZY.charges[k];
+            }
+        }
+    }
+    return 0.0;
+}
+
+// Helper function to get timing from view data
+double getViewTiming(const std::string& view, double x, double y, double z, 
+                    const ViewHits& viewXY, const ViewHits& viewXZ, const ViewHits& viewZY) {
+    if (view == "XY") {
+        int targetX = (int)x;
+        int targetY = (int)y;
+        for (size_t k = 0; k < viewXY.positions.size(); k++) {
+            if (viewXY.positions[k].first == targetX && viewXY.positions[k].second == targetY) {
+                return viewXY.times[k];
+            }
+        }
+    } else if (view == "XZ") {
+        int targetX = (int)x;
+        int targetZ = (int)z;
+        for (size_t k = 0; k < viewXZ.positions.size(); k++) {
+            if (viewXZ.positions[k].first == targetX && viewXZ.positions[k].second == targetZ) {
+                return viewXZ.times[k];
+            }
+        }
+    } else if (view == "ZY") {
+        int targetZ = (int)z;
+        int targetY = (int)y;
+        for (size_t k = 0; k < viewZY.positions.size(); k++) {
+            if (viewZY.positions[k].first == targetZ && viewZY.positions[k].second == targetY) {
+                return viewZY.times[k];
+            }
+        }
+    }
+    return -1.0;
+}
+
+// Function to resolve adjacent hits with new group-based approach
+std::vector<Hit3D> resolveAdjacentHits(const std::vector<Hit3D>& initialHits, 
+                                      const ViewHits& viewXY, 
+                                      const ViewHits& viewXZ, 
+                                      const ViewHits& viewZY) {
+    
+    std::vector<Hit3D> resolvedHits = initialHits;  // Start with initial hits
+    
+    // Step 1: Find all overlapping pairs and form groups
+    struct OverlapGroup {
+        std::vector<int> hitIndices;
+        std::string sharedView;  // The view where all hits in this group overlap
+        int x, y, z;  // The shared coordinates
+    };
+    
+    std::vector<OverlapGroup> finalGroups;
+    
+    // For each unique shared position, collect all hits
+    std::map<std::string, OverlapGroup> positionGroups;
+    
+    for (size_t i = 0; i < initialHits.size(); i++) {
+        const Hit3D& hit = initialHits[i];
+        
+        // Create keys for each view position
+        std::string keyXY = "XY_" + std::to_string((int)hit.x) + "_" + std::to_string((int)hit.y);
+        std::string keyXZ = "XZ_" + std::to_string((int)hit.x) + "_" + std::to_string((int)hit.z);
+        std::string keyZY = "ZY_" + std::to_string((int)hit.z) + "_" + std::to_string((int)hit.y);
+        
+        // Add to XY group
+        if (positionGroups.find(keyXY) == positionGroups.end()) {
+            positionGroups[keyXY].sharedView = "XY";
+            positionGroups[keyXY].x = (int)hit.x;
+            positionGroups[keyXY].y = (int)hit.y;
+            positionGroups[keyXY].z = -1;
+        }
+        positionGroups[keyXY].hitIndices.push_back(i);
+        
+        // Add to XZ group
+        if (positionGroups.find(keyXZ) == positionGroups.end()) {
+            positionGroups[keyXZ].sharedView = "XZ";
+            positionGroups[keyXZ].x = (int)hit.x;
+            positionGroups[keyXZ].y = -1;
+            positionGroups[keyXZ].z = (int)hit.z;
+        }
+        positionGroups[keyXZ].hitIndices.push_back(i);
+        
+        // Add to ZY group
+        if (positionGroups.find(keyZY) == positionGroups.end()) {
+            positionGroups[keyZY].sharedView = "ZY";
+            positionGroups[keyZY].x = -1;
+            positionGroups[keyZY].y = (int)hit.y;
+            positionGroups[keyZY].z = (int)hit.z;
+        }
+        positionGroups[keyZY].hitIndices.push_back(i);
+    }
+    
+    // Convert map to vector and filter out single-hit groups
+    for (const auto& pair : positionGroups) {
+        if (pair.second.hitIndices.size() > 1) {
+            finalGroups.push_back(pair.second);
+        }
+    }
+    
+    // Step 2: Process each group that contains at least one full (3-view) hit
+    int groupsProcessed = 0;
+    int hitsResolved = 0;
+    
+    for (size_t groupIdx = 0; groupIdx < finalGroups.size(); groupIdx++) {
+        const auto& group = finalGroups[groupIdx];
+        
+        // Check if group contains at least one full hit
+        bool hasFullHit = false;
+        std::vector<int> fullHitIndices;
+        std::vector<int> twoViewHitIndices;
+        
+        for (int hitIdx : group.hitIndices) {
+            const Hit3D& hit = initialHits[hitIdx];
+            if (hit.matchType == "Full" || hit.confidence >= 1.0) {
+                hasFullHit = true;
+                fullHitIndices.push_back(hitIdx);
+            } else if (hit.nViews == 2) {
+                twoViewHitIndices.push_back(hitIdx);
+            }
+        }
+        
+        if (!hasFullHit || twoViewHitIndices.empty()) {
+            continue;  // Skip groups without full hits or without 2-view hits to resolve
+        }
+        
+        groupsProcessed++;
+        
+        // Get timing from the first full hit
+        const Hit3D& referenceHit = initialHits[fullHitIndices[0]];
+        double sharedTiming = -1;
+        if (group.sharedView == "XY") sharedTiming = referenceHit.timeXY;
+        else if (group.sharedView == "XZ") sharedTiming = referenceHit.timeXZ;
+        else if (group.sharedView == "ZY") sharedTiming = referenceHit.timeZY;
+        
+        // Process 2-view hits in this group
+        for (int hitIdx : twoViewHitIndices) {
+            Hit3D& hit = resolvedHits[hitIdx];
+            
+            // Check if the missing view matches the shared view
+            bool missingXY = (hit.timeXY < 0);
+            bool missingXZ = (hit.timeXZ < 0);
+            bool missingZY = (hit.timeZY < 0);
+            
+            bool canResolve = false;
+            if (group.sharedView == "XY" && missingXY) canResolve = true;
+            else if (group.sharedView == "XZ" && missingXZ) canResolve = true;
+            else if (group.sharedView == "ZY" && missingZY) canResolve = true;
+            
+            if (canResolve) {
+                // Copy timing information
+                if (group.sharedView == "XY") hit.timeXY = sharedTiming;
+                else if (group.sharedView == "XZ") hit.timeXZ = sharedTiming;
+                else if (group.sharedView == "ZY") hit.timeZY = sharedTiming;
+                
+                hit.nViews = 3;
+                hit.matchType += "-Resolved";
+                hitsResolved++;
+            }
+        }
+        
+        // Step 3: Redistribute charge for all hits in the group
+        double totalSharedCharge = getViewCharge(group.sharedView, 
+                                                resolvedHits[group.hitIndices[0]].x,
+                                                resolvedHits[group.hitIndices[0]].y,
+                                                resolvedHits[group.hitIndices[0]].z,
+                                                viewXY, viewXZ, viewZY);
+        
+        if (totalSharedCharge <= 0) {
+            continue;
+        }
+        
+        // Store original charges before redistribution for all hits in group
+        for (int hitIdx : group.hitIndices) {
+            Hit3D& hit = resolvedHits[hitIdx];
+            hit.redistributed = true;  // Mark this hit as having gone through redistribution
+            
+            // Store original charges for the shared view (before redistribution)
+            if (group.sharedView == "XY" && hit.chargeXY > 0) {
+                hit.originalChargeXY = hit.chargeXY;
+            } else if (group.sharedView == "XZ" && hit.chargeXZ > 0) {
+                hit.originalChargeXZ = hit.chargeXZ;
+            } else if (group.sharedView == "ZY" && hit.chargeZY > 0) {
+                hit.originalChargeZY = hit.chargeZY;
+            }
+        }
+        
+        // Calculate average charge from unshared views for each hit
+        std::vector<double> unsharedAverages;
+        double totalWeight = 0;
+        
+        for (int hitIdx : group.hitIndices) {
+            const Hit3D& hit = resolvedHits[hitIdx];
+            double unsharedSum = 0;
+            int unsharedCount = 0;
+            
+            // Get charges from non-shared views
+            if (group.sharedView != "XY" && hit.timeXY >= 0) {
+                double charge = getViewCharge("XY", hit.x, hit.y, hit.z, viewXY, viewXZ, viewZY);
+                if (charge > 0) {
+                    unsharedSum += charge;
+                    unsharedCount++;
+                }
+            }
+            if (group.sharedView != "XZ" && hit.timeXZ >= 0) {
+                double charge = getViewCharge("XZ", hit.x, hit.y, hit.z, viewXY, viewXZ, viewZY);
+                if (charge > 0) {
+                    unsharedSum += charge;
+                    unsharedCount++;
+                }
+            }
+            if (group.sharedView != "ZY" && hit.timeZY >= 0) {
+                double charge = getViewCharge("ZY", hit.x, hit.y, hit.z, viewXY, viewXZ, viewZY);
+                if (charge > 0) {
+                    unsharedSum += charge;
+                    unsharedCount++;
+                }
+            }
+            
+            double avgUnshared = (unsharedCount > 0) ? unsharedSum / unsharedCount : 1.0;
+            unsharedAverages.push_back(avgUnshared);
+            totalWeight += avgUnshared;
+        }
+        
+        // Redistribute shared charge proportionally and update individual view charges
+        if (totalWeight > 0) {
+            for (size_t i = 0; i < group.hitIndices.size(); i++) {
+                int hitIdx = group.hitIndices[i];
+                double fraction = unsharedAverages[i] / totalWeight;
+                double assignedCharge = totalSharedCharge * fraction;
+                
+                Hit3D& hit = resolvedHits[hitIdx];
+                
+                // Update the redistributed charge for the shared view
+                if (group.sharedView == "XY") {
+                    hit.chargeXY = assignedCharge;
+                } else if (group.sharedView == "XZ") {
+                    hit.chargeXZ = assignedCharge;
+                } else if (group.sharedView == "ZY") {
+                    hit.chargeZY = assignedCharge;
+                }
+                
+                // Recalculate total charge for the hit using final redistributed charges
+                double totalCharge = 0;
+                int viewCount = 0;
+                
+                if (hit.timeXY >= 0) {
+                    totalCharge += hit.chargeXY;
+                    viewCount++;
+                }
+                if (hit.timeXZ >= 0) {
+                    totalCharge += hit.chargeXZ;
+                    viewCount++;
+                }
+                if (hit.timeZY >= 0) {
+                    totalCharge += hit.chargeZY;
+                    viewCount++;
+                }
+                
+                hit.charge = (viewCount > 0) ? totalCharge : hit.charge;
+            }
+        }
+    }
+    
+    // Step 4: Assign confidence levels based on timing correlation
+    for (auto& hit : resolvedHits) {
+        // Skip hits that already have perfect confidence
+        if (hit.matchType == "Full" && hit.confidence >= 1.0) continue;
+        
+        // For resolved hits (now 3-view), calculate max time difference
+        if (hit.matchType.find("Resolved") != std::string::npos && hit.nViews == 3) {
+            std::vector<double> times;
+            if (hit.timeXY >= 0) times.push_back(hit.timeXY);
+            if (hit.timeXZ >= 0) times.push_back(hit.timeXZ);
+            if (hit.timeZY >= 0) times.push_back(hit.timeZY);
+            
+            if (times.size() >= 2) {
+                double maxTimeDiff = 0;
+                for (size_t i = 0; i < times.size(); i++) {
+                    for (size_t j = i + 1; j < times.size(); j++) {
+                        maxTimeDiff = std::max(maxTimeDiff, std::abs(times[i] - times[j]));
+                    }
+                }
+                
+                // Assign confidence based on max time difference
+                if (maxTimeDiff < 5.0) {
+                    hit.confidence = 0.9;
+                } else if (maxTimeDiff < 8.0) {
+                    hit.confidence = 0.7;
+                } else if (maxTimeDiff < 15.0) {
+                    hit.confidence = 0.5;
+                } else {
+                    hit.confidence = 0.3;
+                }
+            }
+        }
+        // For unresolved 2-view hits, set confidence to 0.1
+        else if (hit.nViews == 2 && hit.matchType.find("Resolved") == std::string::npos) {
+            hit.confidence = 0.1;
+        }
+    }
+    
+    return resolvedHits;
+}
+
+// Function to reconstruct 3D hits from 2D projections
+std::vector<Hit3D> reconstructHits(Event* event) {
+    std::vector<Hit3D> hits3D;
+    
+    // Organize hits by view
+    ViewHits viewXY, viewXZ, viewZY;
+    
+    TClonesArray* hits = event->GetHits();
+    if (!hits) return hits3D;
+    
+    // Sort hits into views
+    for (int i = 0; i < hits->GetEntries(); i++) {
+        Hit* hit = (Hit*)hits->At(i);
+        if (!hit) continue;
+        
+        if (hit->GetView() == 0) {  // XY view
+            viewXY.indices.push_back(i);
+            viewXY.positions.push_back({hit->GetX(), hit->GetY()});
+            viewXY.charges.push_back(hit->GetPE());
+            viewXY.times.push_back(hit->GetTfromSpill());
+        }
+        else if (hit->GetView() == 1) {  // XZ view
+            viewXZ.indices.push_back(i);
+            viewXZ.positions.push_back({hit->GetX(), hit->GetZ()});
+            viewXZ.charges.push_back(hit->GetPE());
+            viewXZ.times.push_back(hit->GetTfromSpill());
+        }
+        else if (hit->GetView() == 2) {  // ZY view
+            viewZY.indices.push_back(i);
+            viewZY.positions.push_back({hit->GetZ(), hit->GetY()});
+            viewZY.charges.push_back(hit->GetPE());
+            viewZY.times.push_back(hit->GetTfromSpill());
+        }
+    }
+    
+    std::cout << "Hits per view: XY=" << viewXY.indices.size() 
+              << ", XZ=" << viewXZ.indices.size() 
+              << ", ZY=" << viewZY.indices.size() << std::endl;
+    
+    // Track which hits have been used
+    std::vector<bool> usedXY(viewXY.indices.size(), false);
+    std::vector<bool> usedXZ(viewXZ.indices.size(), false);
+    std::vector<bool> usedZY(viewZY.indices.size(), false);
+    
+    // First pass: Find 3-view matches
+    for (size_t ixy = 0; ixy < viewXY.positions.size(); ixy++) {
+        if (usedXY[ixy]) continue;
+        
+        int x_xy = viewXY.positions[ixy].first;
+        int y_xy = viewXY.positions[ixy].second;
+        
+        for (size_t ixz = 0; ixz < viewXZ.positions.size(); ixz++) {
+            if (usedXZ[ixz]) continue;
+            
+            int x_xz = viewXZ.positions[ixz].first;
+            int z_xz = viewXZ.positions[ixz].second;
+            
+            if (x_xy != x_xz) continue;
+            
+            for (size_t izy = 0; izy < viewZY.positions.size(); izy++) {
+                if (usedZY[izy]) continue;
+                
+                int z_zy = viewZY.positions[izy].first;
+                int y_zy = viewZY.positions[izy].second;
+                
+                if (y_xy == y_zy && z_xz == z_zy) {
+                    Hit3D hit3d;
+                    // Use bin centers, not edges (add 0.5 to get center of unit bin)
+                    hit3d.x = x_xy + 0.5;
+                    hit3d.y = y_xy + 0.5;
+                    hit3d.z = z_xz + 0.5;
+                    hit3d.charge = (viewXY.charges[ixy] + viewXZ.charges[ixz] + viewZY.charges[izy]);
+                    hit3d.timeXY = viewXY.times[ixy];
+                    hit3d.timeXZ = viewXZ.times[ixz];
+                    hit3d.timeZY = viewZY.times[izy];
+                    // Initialize individual view charges
+                    hit3d.chargeXY = viewXY.charges[ixy];
+                    hit3d.chargeXZ = viewXZ.charges[ixz];
+                    hit3d.chargeZY = viewZY.charges[izy];
+                    // Initialize original charges (same as current for full hits initially)
+                    hit3d.originalChargeXY = viewXY.charges[ixy];
+                    hit3d.originalChargeXZ = viewXZ.charges[ixz];
+                    hit3d.originalChargeZY = viewZY.charges[izy];
+                    hit3d.nViews = 3;
+                    hit3d.matchType = "Full";
+                    hit3d.confidence = 1.0;  // Highest confidence - unambiguous 3-view matches
+                    hit3d.redistributed = false;  // Initially not redistributed
+                    
+                    hits3D.push_back(hit3d);
+                    usedXY[ixy] = true;
+                    usedXZ[ixz] = true;
+                    usedZY[izy] = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Second pass: Find 2-view matches
+    // XY-XZ matches
+    for (size_t ixy = 0; ixy < viewXY.positions.size(); ixy++) {
+        if (usedXY[ixy]) continue;
+        
+        int x_xy = viewXY.positions[ixy].first;
+        int y_xy = viewXY.positions[ixy].second;
+        
+        for (size_t ixz = 0; ixz < viewXZ.positions.size(); ixz++) {
+            if (usedXZ[ixz]) continue;
+            
+            int x_xz = viewXZ.positions[ixz].first;
+            int z_xz = viewXZ.positions[ixz].second;
+            
+            if (x_xy == x_xz) {
+                Hit3D hit3d;
+                hit3d.x = x_xy + 0.5;
+                hit3d.y = y_xy + 0.5;
+                hit3d.z = z_xz + 0.5;
+                hit3d.charge = (viewXY.charges[ixy] + viewXZ.charges[ixz]);
+                hit3d.timeXY = viewXY.times[ixy];
+                hit3d.timeXZ = viewXZ.times[ixz];
+                hit3d.timeZY = -1;
+                // Initialize individual view charges
+                hit3d.chargeXY = viewXY.charges[ixy];
+                hit3d.chargeXZ = viewXZ.charges[ixz];
+                hit3d.chargeZY = -1;  // Missing view
+                // Initialize original charges
+                hit3d.originalChargeXY = viewXY.charges[ixy];
+                hit3d.originalChargeXZ = viewXZ.charges[ixz];
+                hit3d.originalChargeZY = -1;  // Never had this view
+                hit3d.nViews = 2;
+                hit3d.matchType = "Partial-XY-XZ";
+                hit3d.confidence = 0.1;
+                hit3d.redistributed = false;
+                
+                hits3D.push_back(hit3d);
+                usedXY[ixy] = true;
+                usedXZ[ixz] = true;
+                break;
+            }
+        }
+    }
+    
+    // XY-ZY matches
+    for (size_t ixy = 0; ixy < viewXY.positions.size(); ixy++) {
+        if (usedXY[ixy]) continue;
+        
+        int x_xy = viewXY.positions[ixy].first;
+        int y_xy = viewXY.positions[ixy].second;
+        
+        for (size_t izy = 0; izy < viewZY.positions.size(); izy++) {
+            if (usedZY[izy]) continue;
+            
+            int z_zy = viewZY.positions[izy].first;
+            int y_zy = viewZY.positions[izy].second;
+            
+            if (y_xy == y_zy) {
+                Hit3D hit3d;
+                hit3d.x = x_xy + 0.5;
+                hit3d.y = y_xy + 0.5;
+                hit3d.z = z_zy + 0.5;
+                hit3d.charge = (viewXY.charges[ixy] + viewZY.charges[izy]);
+                hit3d.timeXY = viewXY.times[ixy];
+                hit3d.timeXZ = -1;
+                hit3d.timeZY = viewZY.times[izy];
+                // Initialize individual view charges
+                hit3d.chargeXY = viewXY.charges[ixy];
+                hit3d.chargeXZ = -1;  // Missing view
+                hit3d.chargeZY = viewZY.charges[izy];
+                // Initialize original charges
+                hit3d.originalChargeXY = viewXY.charges[ixy];
+                hit3d.originalChargeXZ = -1;  // Never had this view
+                hit3d.originalChargeZY = viewZY.charges[izy];
+                hit3d.nViews = 2;
+                hit3d.matchType = "Partial-XY-ZY";
+                hit3d.confidence = 0.1;
+                hit3d.redistributed = false;
+                
+                hits3D.push_back(hit3d);
+                usedXY[ixy] = true;
+                usedZY[izy] = true;
+                break;
+            }
+        }
+    }
+    
+    // XZ-ZY matches
+    for (size_t ixz = 0; ixz < viewXZ.positions.size(); ixz++) {
+        if (usedXZ[ixz]) continue;
+        
+        int x_xz = viewXZ.positions[ixz].first;
+        int z_xz = viewXZ.positions[ixz].second;
+        
+        for (size_t izy = 0; izy < viewZY.positions.size(); izy++) {
+            if (usedZY[izy]) continue;
+            
+            int z_zy = viewZY.positions[izy].first;
+            int y_zy = viewZY.positions[izy].second;
+            
+            if (z_xz == z_zy) {
+                Hit3D hit3d;
+                hit3d.x = x_xz + 0.5;
+                hit3d.y = y_zy + 0.5;
+                hit3d.z = z_xz + 0.5;
+                hit3d.charge = (viewXZ.charges[ixz] + viewZY.charges[izy]);
+                hit3d.timeXY = -1;
+                hit3d.timeXZ = viewXZ.times[ixz];
+                hit3d.timeZY = viewZY.times[izy];
+                // Initialize individual view charges
+                hit3d.chargeXY = -1;  // Missing view
+                hit3d.chargeXZ = viewXZ.charges[ixz];
+                hit3d.chargeZY = viewZY.charges[izy];
+                // Initialize original charges
+                hit3d.originalChargeXY = -1;  // Never had this view
+                hit3d.originalChargeXZ = viewXZ.charges[ixz];
+                hit3d.originalChargeZY = viewZY.charges[izy];
+                hit3d.nViews = 2;
+                hit3d.matchType = "Partial-XZ-ZY";
+                hit3d.confidence = 0.1;
+                hit3d.redistributed = false;
+                
+                hits3D.push_back(hit3d);
+                usedXZ[ixz] = true;
+                usedZY[izy] = true;
+                break;
+            }
+        }
+    }
+    
+    // Third pass: Apply new group-based resolution with charge sharing
+    hits3D = resolveAdjacentHits(hits3D, viewXY, viewXZ, viewZY);
+    
+    return hits3D;
+}
+
+// Function to find entry point based on earliest time
+Hit3D findEntryPoint(const std::vector<Hit3D>& fullHits) {
+    if (fullHits.empty()) {
+        Hit3D dummy;
+        dummy.x = dummy.y = dummy.z = 0;
+        return dummy;
+    }
+    
+    // Find minimum time
+    double minTime = std::numeric_limits<double>::max();
+    std::vector<size_t> candidateIndices;
+    
+    // Check all timestamps for all hits
+    for (size_t i = 0; i < fullHits.size(); i++) {
+        double hitMinTime = std::min({fullHits[i].timeXY, fullHits[i].timeXZ, fullHits[i].timeZY});
+        if (hitMinTime < minTime - 0.01) {  // New minimum (with small tolerance)
+            minTime = hitMinTime;
+            candidateIndices.clear();
+            candidateIndices.push_back(i);
+        } else if (std::abs(hitMinTime - minTime) < 0.01) {  // Same minimum (within tolerance)
+            candidateIndices.push_back(i);
+        }
+    }
+    
+    // If only one candidate, return it
+    if (candidateIndices.size() == 1) {
+        return fullHits[candidateIndices[0]];
+    }
+    
+    // Multiple candidates with same time - choose closest to y=8
+    double minYDist = std::numeric_limits<double>::max();
+    std::vector<size_t> yClosestIndices;
+    
+    for (size_t idx : candidateIndices) {
+        double yDist = std::abs(fullHits[idx].y - 8.0);
+        if (yDist < minYDist - 0.01) {
+            minYDist = yDist;
+            yClosestIndices.clear();
+            yClosestIndices.push_back(idx);
+        } else if (std::abs(yDist - minYDist) < 0.01) {
+            yClosestIndices.push_back(idx);
+        }
+    }
+    
+    // If only one closest to y=8, return it
+    if (yClosestIndices.size() == 1) {
+        return fullHits[yClosestIndices[0]];
+    }
+    
+    // Multiple with same y distance - average their x and z
+    double avgX = 0, avgY = 0, avgZ = 0;
+    for (size_t idx : yClosestIndices) {
+        avgX += fullHits[idx].x;
+        avgY += fullHits[idx].y;
+        avgZ += fullHits[idx].z;
+    }
+    
+    Hit3D entryPoint = fullHits[yClosestIndices[0]];
+    entryPoint.x = avgX / yClosestIndices.size();
+    entryPoint.z = avgZ / yClosestIndices.size();
+    
+    return entryPoint;
+}
+
+// Function to fit 3D line to high-confidence points only
+TrajectoryParams fitTrajectory(const std::vector<Hit3D>& allHits) {
+    TrajectoryParams params;
+    params.valid = false;
+    
+    // Filter for high-confidence hits (>= 0.5)
+    std::vector<Hit3D> highConfidenceHits;
+    for (const auto& hit : allHits) {
+        if (hit.confidence >= 0.5) {
+            highConfidenceHits.push_back(hit);
+        }
+    }
+    
+    if (highConfidenceHits.size() < 2) {
+        std::cout << "Not enough high-confidence hits for trajectory fitting (need at least 2, have " 
+                  << highConfidenceHits.size() << ")" << std::endl;
+        return params;
+    }
+    
+    // Find entry point
+    Hit3D entryPoint = findEntryPoint(highConfidenceHits);
+    params.x0 = entryPoint.x;
+    params.y0 = entryPoint.y;
+    params.z0 = entryPoint.z;
+    
+    std::cout << "\nEntry point found at: (" << params.x0 << ", " << params.y0 << ", " << params.z0 << ")" << std::endl;
+    
+    // Calculate centroid
+    double cx = 0, cy = 0, cz = 0;
+    for (const auto& hit : highConfidenceHits) {
+        cx += hit.x;
+        cy += hit.y;
+        cz += hit.z;
+    }
+    cx /= highConfidenceHits.size();
+    cy /= highConfidenceHits.size();
+    cz /= highConfidenceHits.size();
+    
+    // SVD-based line fitting
+    double sumXX = 0, sumXY = 0, sumXZ = 0;
+    double sumYY = 0, sumYZ = 0, sumZZ = 0;
+    
+    for (const auto& hit : highConfidenceHits) {
+        double dx = hit.x - cx;
+        double dy = hit.y - cy;
+        double dz = hit.z - cz;
+        
+        sumXX += dx * dx;
+        sumXY += dx * dy;
+        sumXZ += dx * dz;
+        sumYY += dy * dy;
+        sumYZ += dy * dz;
+        sumZZ += dz * dz;
+    }
+    
+    // Find direction as eigenvector of moment matrix
+    TMatrixD M(3, 3);
+    M(0,0) = sumXX; M(0,1) = sumXY; M(0,2) = sumXZ;
+    M(1,0) = sumXY; M(1,1) = sumYY; M(1,2) = sumYZ;
+    M(2,0) = sumXZ; M(2,1) = sumYZ; M(2,2) = sumZZ;
+    
+    TVectorD eigenValues;
+    TMatrixD eigenVectors = M.EigenVectors(eigenValues);
+    
+    // Find largest eigenvalue
+    int maxIdx = 0;
+    for (int i = 1; i < 3; i++) {
+        if (eigenValues[i] > eigenValues[maxIdx]) maxIdx = i;
+    }
+    
+    params.vx = eigenVectors(0, maxIdx);
+    params.vy = eigenVectors(1, maxIdx);
+    params.vz = eigenVectors(2, maxIdx);
+
+    if (params.vy > 0) {
+        // std::cout << "Flipping direction to point downward (vy was positive)" << std::endl;
+        params.vx = -params.vx;
+        params.vy = -params.vy;
+        params.vz = -params.vz;
+    }
+    
+    // Normalize direction vector
+    double norm = sqrt(params.vx*params.vx + params.vy*params.vy + params.vz*params.vz);
+    params.vx /= norm;
+    params.vy /= norm;
+    params.vz /= norm;
+    
+    // Calculate angles
+    params.theta = acos(-params.vy) * 180.0 / TMath::Pi();
+    double phi_from_z = atan2(params.vz, params.vx);
+    params.phi = (phi_from_z + TMath::Pi()/2.0) * 180.0 / TMath::Pi();
+    
+    params.valid = true;
+    
+    // Calculate fit quality using only high-confidence hits
+    double sumDist2 = 0;
+    for (const auto& hit : highConfidenceHits) {
+        // Project hit onto line
+        double t = (hit.x - params.x0) * params.vx + 
+                   (hit.y - params.y0) * params.vy + 
+                   (hit.z - params.z0) * params.vz;
+        
+        double px = params.x0 + t * params.vx;
+        double py = params.y0 + t * params.vy;
+        double pz = params.z0 + t * params.vz;
+        
+        double dist2 = (hit.x - px)*(hit.x - px) + 
+                       (hit.y - py)*(hit.y - py) + 
+                       (hit.z - pz)*(hit.z - pz);
+        sumDist2 += dist2;
+    }
+    
+    double rms = sqrt(sumDist2 / highConfidenceHits.size());
+    
+    std::cout << "\nTrajectory fit results:" << std::endl;
+    std::cout << "  Entry point: (" << params.x0 << ", " << params.y0 << ", " << params.z0 << ")" << std::endl;
+    std::cout << "  Direction vector: (" << params.vx << ", " << params.vy << ", " << params.vz << ")" << std::endl;
+    std::cout << "  Theta (from -Y): " << params.theta << " degrees" << std::endl;
+    std::cout << "  Phi (from -Z in XY plane): " << params.phi << " degrees" << std::endl;
+    std::cout << "  RMS distance from line: " << rms << " cm" << std::endl;
+    
+    return params;
+}
+
+// Function to print summary
+void printSummary(const std::vector<Hit3D>& hits3D, int eventID) {
+    std::cout << "\n==================================================\n";
+    std::cout << "3D Reconstruction Summary for Event " << eventID << "\n";
+    std::cout << "==================================================\n";
+    
+    int nFull = 0, nPartial = 0, nGroupResolved = 0;
+    std::map<std::string, int> typeCounts;
+    std::map<double, int> confidenceCounts;
+    
+    for (const auto& hit : hits3D) {
+        if (hit.nViews == 3 && hit.confidence >= 1.0) nFull++;
+        else if (hit.matchType.find("Resolved") != std::string::npos) nGroupResolved++;
+        else nPartial++;
+        
+        typeCounts[hit.matchType]++;
+        
+        // Round confidence to nearest 0.1 for grouping
+        double roundedConf = round(hit.confidence / 0.1) * 0.1;
+        confidenceCounts[roundedConf]++;
+    }
+    
+    std::cout << "\nTotal 3D hits reconstructed: " << hits3D.size() << std::endl;
+    std::cout << "  - Full matches (3 views): " << nFull << std::endl;
+    std::cout << "  - Group-resolved hits: " << nGroupResolved << std::endl;
+    std::cout << "  - Remaining partial matches (2 views): " << nPartial << std::endl;
+    
+    std::cout << "\nConfidence level distribution:\n";
+    for (const auto& p : confidenceCounts) {
+        std::cout << "    " << std::fixed << std::setprecision(1) << p.first << ": " << p.second << " hits" << std::endl;
+    }
+}
+
+// Main entry point function that matches THIS_NAME
+void EventDisplays_3D() {
+    gROOT->SetBatch(kTRUE);
+    
+    // Get command line arguments from the global application
+    int argc = gApplication->Argc();
+    char** argv = gApplication->Argv();
+    
+    // Check arguments
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <input_file.root> <event_number>" << std::endl;
+        std::cerr << "Example: " << argv[0] << " /path/to/events.root 42" << std::endl;
+        return;
+    }
+    
+    TString inputFile = argv[1];
+    int eventNumber = atoi(argv[2]);
+    
+    std::cout << "Input file: " << inputFile << std::endl;
+    std::cout << "Event number: " << eventNumber << std::endl;
+    
+    // Open input file
+    TFile* file = TFile::Open(inputFile, "READ");
+    if (!file || file->IsZombie()) {
+        std::cerr << "Error: Cannot open file " << inputFile << std::endl;
+        return;
+    }
+    
+    // Get the TimeGroupedEvents tree
+    TTree* tree = (TTree*)file->Get("TimeGroupedEvents");
+    if (!tree) {
+        std::cerr << "Error: Cannot find TimeGroupedEvents tree" << std::endl;
+        file->Close();
+        return;
+    }
+    
+    // Check event number
+    Long64_t nEvents = tree->GetEntries();
+    if (eventNumber < 0 || eventNumber >= nEvents) {
+        std::cerr << "Error: Event number " << eventNumber 
+                  << " out of range. File contains " << nEvents << " events." << std::endl;
+        file->Close();
+        return;
+    }
+    
+    // Set up event reading
+    Event* event = new Event();
+    tree->SetBranchAddress("Event", &event);
+    
+    // Get the specified event
+    tree->GetEntry(eventNumber);
+    
+    std::cout << "\nProcessing Event " << eventNumber 
+              << " (Event ID: " << event->GetEventID() << ")" << std::endl;
+    std::cout << "Total 2D hits in event: " << event->GetNHits() << std::endl;
+    
+    // Reconstruct 3D hits with new group-based resolution
+    std::vector<Hit3D> hits3D = reconstructHits(event);
+    
+    // Fit trajectory using high-confidence hits only
+    TrajectoryParams trajectory = fitTrajectory(hits3D);
+    
+    // Print summary
+    printSummary(hits3D, event->GetEventID());
+    
+    // Create output directory and filename
+    TString outputDir = createOutputDirectory(inputFile);
+    TString inputBaseName = gSystem->BaseName(inputFile);
+    inputBaseName.ReplaceAll(".root", "");
+    TString outputFile = Form("%s/%s_3D_event%d_Trj_GroupResSide.root", outputDir.Data(), inputBaseName.Data(), eventNumber);
+    
+    std::cout << "\nSaving output to: " << outputFile << std::endl;
+    
+    // Create output file
+    TFile* fOutput = new TFile(outputFile, "RECREATE");
+    if (!fOutput || fOutput->IsZombie()) {
+        std::cerr << "Error: Cannot create output file " << outputFile << std::endl;
+        file->Close();
+        return;
+    }
+    
+    // Create TH3 histograms for different hit types
+    // Note: Y axis is vertical, X and Z are horizontal
+    TH3F* h3D_Full = new TH3F("h3D_Full", 
+                          Form("Event %d - Full 3D Matches (3 views);X [cm];Z [cm];Y [cm]", eventNumber),
+                          24, 0, 24, 48, 0, 48, 8, 0, 8);
+
+    TH3F* h3D_GroupResolved = new TH3F("h3D_GroupResolved", 
+                                     Form("Event %d - Group-Resolved 3D Hits;X [cm];Z [cm];Y [cm]", eventNumber),
+                                     24, 0, 24, 48, 0, 48, 8, 0, 8);
+
+    TH3F* h3D_Partial = new TH3F("h3D_Partial", 
+                             Form("Event %d - Partial 3D Matches (2 views);X [cm];Z [cm];Y [cm]", eventNumber),
+                             24, 0, 24, 48, 0, 48, 8, 0, 8);
+
+    TH3F* h3D_All = new TH3F("h3D_All", 
+                         Form("Event %d - All 3D Matches;X [cm];Z [cm];Y [cm]", eventNumber),
+                         24, 0, 24, 48, 0, 48, 8, 0, 8);
+
+    TH3F* h3D_Alpha = new TH3F("h3D_Alpha", 
+                           Form("Event %d - Hit Confidence Levels;X [cm];Z [cm];Y [cm]", eventNumber),
+                           24, 0, 24, 48, 0, 48, 8, 0, 8);
+
+    // Fill histograms with charge as weight and confidence as alpha
+    for (const auto& hit : hits3D) {
+        // Get the bin for the hit position (already at bin center)
+        int binX = h3D_All->GetXaxis()->FindBin(hit.x);
+        int binZ = h3D_All->GetYaxis()->FindBin(hit.z);  // Z maps to Y axis in ROOT
+        int binY = h3D_All->GetZaxis()->FindBin(hit.y);  // Y maps to Z axis in ROOT
+        
+        // Set the bin content to the charge value (for color scaling)
+        // Note: ROOT TH3 uses (X, Y, Z) ordering, but we map as (X, Z, Y)
+        h3D_All->SetBinContent(binX, binZ, binY, hit.charge);
+        
+        // Set alpha value based on confidence level
+        h3D_Alpha->SetBinContent(binX, binZ, binY, hit.confidence);
+        
+        if (hit.confidence >= 1.0) {
+            h3D_Full->SetBinContent(binX, binZ, binY, hit.charge);
+        } else if (hit.matchType.find("GroupResolved") != std::string::npos) {
+            h3D_GroupResolved->SetBinContent(binX, binZ, binY, hit.charge);
+        } else {
+            h3D_Partial->SetBinContent(binX, binZ, binY, hit.charge);
+        }
+    }
+
+    // Set up color palette for charge visualization
+    gStyle->SetPalette(kViridis);
+
+    // Configure histogram display properties
+    h3D_All->SetOption("BOX2Z");
+    h3D_Full->SetOption("BOX2Z");
+    h3D_GroupResolved->SetOption("BOX2Z");
+    h3D_Partial->SetOption("BOX2Z");
+
+    h3D_All->SetMinimum(0);
+    h3D_Full->SetMinimum(0);
+    h3D_GroupResolved->SetMinimum(0);
+    h3D_Partial->SetMinimum(0);
+
+    // Create trajectory visualization objects
+    TPolyLine3D* trajectoryLine = nullptr;
+    TF1* trajX_vs_Z = nullptr;
+    TF1* trajY_vs_Z = nullptr;
+    TPolyLine3D* thetaZeroLine = nullptr;
+    TPolyLine3D* phiZeroLine = nullptr;
+    
+    // Create reference lines
+    thetaZeroLine = new TPolyLine3D(2);
+    thetaZeroLine->SetPoint(0, 12, 24, 8);  // Start at center top (x=12, z=24, y=8)
+    thetaZeroLine->SetPoint(1, 12, 24, 0);  // End at center bottom (x=12, z=24, y=0)
+    thetaZeroLine->SetLineColor(kBlue);
+    thetaZeroLine->SetLineWidth(2);
+    thetaZeroLine->SetLineStyle(2);  // Dashed line
+    
+    phiZeroLine = new TPolyLine3D(2);
+    phiZeroLine->SetPoint(0, 12, 48, 4);  // Start at center (x=12, z=48, y=4)
+    phiZeroLine->SetPoint(1, 12, 0, 4);   // End at -Z edge (x=12, z=0, y=4)
+    phiZeroLine->SetLineColor(kGreen);
+    phiZeroLine->SetLineWidth(2);
+    phiZeroLine->SetLineStyle(2);
+    
+    if (trajectory.valid) {
+        double zMin = 0;
+        double zMax = 48;
+        
+        for (const auto& hit : hits3D) {
+            if (hit.confidence >= 0.5) {
+                zMin = std::min(zMin, hit.z - 2.0);
+                zMax = std::max(zMax, hit.z + 2.0);
+            }
+        }
+        
+        if (std::abs(trajectory.vz) > 0.01) {
+            trajX_vs_Z = new TF1("trajX_vs_Z", 
+                                Form("%f + (x - %f) * %f / %f", 
+                                     trajectory.x0, trajectory.z0, trajectory.vx, trajectory.vz),
+                                zMin, zMax);
+            trajX_vs_Z->SetLineColor(kRed);
+            trajX_vs_Z->SetLineWidth(2);
+            
+            trajY_vs_Z = new TF1("trajY_vs_Z", 
+                                Form("%f + (x - %f) * %f / %f", 
+                                     trajectory.y0, trajectory.z0, trajectory.vy, trajectory.vz),
+                                zMin, zMax);
+            trajY_vs_Z->SetLineColor(kRed);
+            trajY_vs_Z->SetLineWidth(2);
+        }
+        
+        // Create polyline for 3D visualization
+        int nPoints = 100;
+        trajectoryLine = new TPolyLine3D(nPoints);
+        
+        double tMin = 1e9, tMax = -1e9;
+        for (const auto& hit : hits3D) {
+            if (hit.confidence >= 0.8) {
+                double t = (hit.x - trajectory.x0) * trajectory.vx + 
+                          (hit.y - trajectory.y0) * trajectory.vy + 
+                          (hit.z - trajectory.z0) * trajectory.vz;
+                tMin = std::min(tMin, t);
+                tMax = std::max(tMax, t);
+            }
+        }
+        
+        double extension = 3.0;
+        tMin -= extension;
+        tMax += extension;
+        
+        for (int i = 0; i < nPoints; i++) {
+            double t = tMin + (tMax - tMin) * i / (nPoints - 1);
+            double x = trajectory.x0 + t * trajectory.vx;
+            double y = trajectory.y0 + t * trajectory.vy;
+            double z = trajectory.z0 + t * trajectory.vz;
+            
+            // Note: SetPoint uses the ROOT 3D coordinate system
+            // Our histograms map physical (x,y,z) to ROOT (x,z,y)
+            trajectoryLine->SetPoint(i, x, z, y);
+        }
+        
+        trajectoryLine->SetLineColor(kRed);
+        trajectoryLine->SetLineWidth(3);
+    }
+
+    // Write histograms
+    h3D_Full->Write();
+    h3D_GroupResolved->Write();
+    h3D_Partial->Write();
+    h3D_All->Write();
+    h3D_Alpha->Write();
+    
+    if (trajectoryLine) {
+        trajectoryLine->Write("trajectory");
+    }
+    if (trajX_vs_Z) {
+        trajX_vs_Z->Write();
+    }
+    if (trajY_vs_Z) {
+        trajY_vs_Z->Write();
+    }
+    
+    thetaZeroLine->Write("thetaZeroLine");
+    phiZeroLine->Write("phiZeroLine");
+    
+    // Save tree with individual view charges
+    TTree* tree3D = new TTree("Hits3D", "Reconstructed 3D Hits with Individual View Charges");
+    
+    Double_t t_x, t_y, t_z, t_charge, t_confidence;
+    Double_t t_timeXY, t_timeXZ, t_timeZY;
+    Double_t t_chargeXY, t_chargeXZ, t_chargeZY;
+    Double_t t_originalChargeXY, t_originalChargeXZ, t_originalChargeZY;
+    Int_t t_nViews, t_redistributed;
+    Char_t t_matchType[100];
+    
+    tree3D->Branch("x", &t_x, "x/D");
+    tree3D->Branch("y", &t_y, "y/D");
+    tree3D->Branch("z", &t_z, "z/D");
+    tree3D->Branch("charge", &t_charge, "charge/D");
+    tree3D->Branch("confidence", &t_confidence, "confidence/D");
+    tree3D->Branch("timeXY", &t_timeXY, "timeXY/D");
+    tree3D->Branch("timeXZ", &t_timeXZ, "timeXZ/D");
+    tree3D->Branch("timeZY", &t_timeZY, "timeZY/D");
+    tree3D->Branch("chargeXY", &t_chargeXY, "chargeXY/D");
+    tree3D->Branch("chargeXZ", &t_chargeXZ, "chargeXZ/D");
+    tree3D->Branch("chargeZY", &t_chargeZY, "chargeZY/D");
+    tree3D->Branch("originalChargeXY", &t_originalChargeXY, "originalChargeXY/D");
+    tree3D->Branch("originalChargeXZ", &t_originalChargeXZ, "originalChargeXZ/D");
+    tree3D->Branch("originalChargeZY", &t_originalChargeZY, "originalChargeZY/D");
+    tree3D->Branch("nViews", &t_nViews, "nViews/I");
+    tree3D->Branch("redistributed", &t_redistributed, "redistributed/I");
+    tree3D->Branch("matchType", t_matchType, "matchType/C");
+    
+    for (const auto& hit : hits3D) {
+        t_x = hit.x;
+        t_y = hit.y;
+        t_z = hit.z;
+        t_charge = hit.charge;
+        t_confidence = hit.confidence;
+        t_timeXY = hit.timeXY;
+        t_timeXZ = hit.timeXZ;
+        t_timeZY = hit.timeZY;
+        t_chargeXY = hit.chargeXY;
+        t_chargeXZ = hit.chargeXZ;
+        t_chargeZY = hit.chargeZY;
+        t_originalChargeXY = hit.originalChargeXY;
+        t_originalChargeXZ = hit.originalChargeXZ;
+        t_originalChargeZY = hit.originalChargeZY;
+        t_nViews = hit.nViews;
+        t_redistributed = hit.redistributed ? 1 : 0;
+        strcpy(t_matchType, hit.matchType.c_str());
+        
+        tree3D->Fill();
+    }
+    
+    tree3D->Write();
+    
+    // Save trajectory parameters
+    TTree* trajTree = new TTree("Trajectory", "Fitted Trajectory Parameters");
+    Double_t tr_x0, tr_y0, tr_z0, tr_vx, tr_vy, tr_vz, tr_theta, tr_phi;
+    Int_t tr_valid, tr_nHits;
+    
+    trajTree->Branch("x0", &tr_x0, "x0/D");
+    trajTree->Branch("y0", &tr_y0, "y0/D");
+    trajTree->Branch("z0", &tr_z0, "z0/D");
+    trajTree->Branch("vx", &tr_vx, "vx/D");
+    trajTree->Branch("vy", &tr_vy, "vy/D");
+    trajTree->Branch("vz", &tr_vz, "vz/D");
+    trajTree->Branch("theta", &tr_theta, "theta/D");
+    trajTree->Branch("phi", &tr_phi, "phi/D");
+    trajTree->Branch("valid", &tr_valid, "valid/I");
+    trajTree->Branch("nHits", &tr_nHits, "nHits/I");
+    
+    if (trajectory.valid) {
+        tr_x0 = trajectory.x0;
+        tr_y0 = trajectory.y0;
+        tr_z0 = trajectory.z0;
+        tr_vx = trajectory.vx;
+        tr_vy = trajectory.vy;
+        tr_vz = trajectory.vz;
+        tr_theta = trajectory.theta;
+        tr_phi = trajectory.phi;
+        tr_valid = 1;
+        
+        int highConfHits = 0;
+        for (const auto& hit : hits3D) {
+            if (hit.confidence >= 0.5) highConfHits++;
+        }
+        tr_nHits = highConfHits;
+        
+        trajTree->Fill();
+    }
+    
+    trajTree->Write();
+    
+    // Save summary information
+    TNamed eventInfo("EventInfo", Form("Event %d: %zu 3D hits reconstructed (%d high-confidence hits used for trajectory)", 
+                                      eventNumber, hits3D.size(), 
+                                      trajectory.valid ? tr_nHits : 0));
+    eventInfo.Write();
+    
+    if (trajectory.valid) {
+        TNamed trajInfo("TrajectoryInfo", Form("Theta=%.1f deg, Phi=%.1f deg, Entry=(%.1f,%.1f,%.1f)", 
+                                              trajectory.theta, trajectory.phi, 
+                                              trajectory.x0, trajectory.y0, trajectory.z0));
+        trajInfo.Write();
+    }
+    
+    fOutput->Close();
+    file->Close();
+    
+    std::cout << "\n3D reconstruction complete with individual view charges!" << std::endl;
+    std::cout << "Output saved to: " << outputFile << std::endl;
+    std::cout << "\nTo view in ROOT:" << std::endl;
+    std::cout << "  root " << outputFile << std::endl;
+    std::cout << "  // Method 1: Draw everything together with confidence levels" << std::endl;
+    std::cout << "  // Fitted line (red solid)" << std::endl;   
+    std::cout << "  // theta=0 reference (blue dashed)" << std::endl;
+    std::cout << "  // phi=0 reference (green dashed)" << std::endl;
+    std::cout << "  h3D_All->Draw(\"BOX2Z\")" << std::endl;
+    std::cout << "  TPolyLine3D *traj = (TPolyLine3D*)gDirectory->Get(\"trajectory\")" << std::endl;
+    std::cout << "  traj->SetLineColor(2)" << std::endl;
+    std::cout << "  traj->SetLineWidth(3)" << std::endl;
+    std::cout << "  traj->Draw()" << std::endl;
+    std::cout << "  TPolyLine3D *theta0 = (TPolyLine3D*)gDirectory->Get(\"thetaZeroLine\")" << std::endl;
+    std::cout << "  theta0->Draw()" << std::endl;
+    std::cout << "  TPolyLine3D *phi0 = (TPolyLine3D*)gDirectory->Get(\"phiZeroLine\")" << std::endl;
+    std::cout << "  phi0->Draw()" << std::endl;
+    std::cout << "  " << std::endl;
+    std::cout << "  // Method 2: View hits by type" << std::endl;
+    std::cout << "  h3D_Full->Draw(\"BOX2Z\")              // Perfect 3-view hits" << std::endl;
+    std::cout << "  h3D_GroupResolved->Draw(\"BOX2Z\")     // Group-resolved hits (using 3-view references)" << std::endl;
+    std::cout << "  h3D_Partial->Draw(\"BOX2Z\")           // Remaining unresolved 2-view hits" << std::endl;
+    std::cout << "  " << std::endl;
+    std::cout << "  // Method 3: View hits by confidence level using h3D_Alpha" << std::endl;
+    std::cout << "  h3D_Alpha->Draw(\"BOX2Z\")" << std::endl;
+    std::cout << "  // This shows: 1.0=Full hits, 0.9/0.7/0.5/0.3=Resolved hits, 0.1=Unresolved 2-view" << std::endl;
+    
+    delete event;
+    exit(0);
+}
