@@ -63,21 +63,17 @@ This will create two TTrees in a single _event.root file: AllEvents and TimeGrou
 Quality of life scripts: 
 
 **Unpack.sh**
-
-'''
+```
 ./Unpack.sh /path/to/run/folder1 /path/to/run/folder2
-'''
-
+```
 Notice this command has a capital "U" instead of the lowercase "u" in ./unpack. 
 This bash script will automatically run the entire data_preprocessing pipeline from TDMunpack to EventStructure_12free. 
 This script should be operated on run folders, ie. one level above subrun folders and two levels above .daq files. This script can take in multiple folder paths. 
 
 **delet_3D.sh**
-
-'''
+```
 ./delet_3D.sh
-'''
-
+```
 This bash script will search for and delete files or folders that match specified names in the script. 
 ## This deletion is permanent, be extremely careful when specifying target names.
 
